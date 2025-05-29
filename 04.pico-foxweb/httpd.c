@@ -1,4 +1,3 @@
-#include "auth.h"
 #include "httpd.h"
 
 #include <arpa/inet.h>
@@ -186,15 +185,19 @@ void respond(int slot) {
   int rcvd;
 
   buf = malloc(BUF_SIZE);
+  if (!buf) {
+    fprintf(stderr, "Failed to allocate memory for buffer\n");
+    return;
+  }
+
   rcvd = recv(clients[slot], buf, BUF_SIZE, 0);
 
-  if (rcvd < 0) // receive error
-    fprintf(stderr, ("recv() error\n"));
-  else if (rcvd == 0) // receive socket closed
-    fprintf(stderr, "Client disconnected upexpectedly.\n");
-  else // message received
-  {
-    buf[rcvd] = '\0';
+  if (rcvd < 0) {
+    fprintf(stderr, "recv() error\n");
+  } else if (rcvd == 0) {
+    fprintf(stderr, "Client disconnected unexpectedly.\n");
+  } else {
+    buf[rcvd] = '\0'; // Убедимся, что данные корректно завершены
 
     method = strtok(buf, " \t\r\n");
     uri = strtok(NULL, " \t");
@@ -207,9 +210,9 @@ void respond(int slot) {
     qs = strchr(uri, '?');
 
     if (qs)
-      *qs++ = '\0'; // split URI
+      *qs++ = '\0';
     else
-      qs = uri - 1; // use an empty string
+      qs = uri - 1;
 
     header_t *h = reqhdr;
     char *t, *t2;
@@ -233,24 +236,23 @@ void respond(int slot) {
         break;
     }
     t = strtok(NULL, "\r\n");
-    t2 = request_header("Content-Length"); // and the related header if there is
+    t2 = request_header("Content-Length");
     payload = t;
     payload_size = t2 ? atol(t2) : (rcvd - (t - buf));
 
-    // authorization
-    if (!check_digest_auth(method, uri, reqhdr)) {
-      send_unauthorized();
-    }
-
-    // bind clientfd to stdout, making it easier to write
     int clientfd = clients[slot];
     dup2(clientfd, STDOUT_FILENO);
     close(clientfd);
 
-    // call router
     route();
 
-    // tidy up
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    getpeername(clientfd, (struct sockaddr *)&client_addr, &addr_len);
+    char *client_ip = inet_ntoa(client_addr.sin_addr);
+
+    log_request(client_ip, method, uri, status, response_size);
+
     fflush(stdout);
     shutdown(STDOUT_FILENO, SHUT_WR);
     close(STDOUT_FILENO);
